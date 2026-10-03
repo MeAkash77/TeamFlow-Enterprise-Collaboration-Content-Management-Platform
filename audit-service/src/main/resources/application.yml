@@ -1,0 +1,22 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: teamflow-audit
+  datasource:
+    url: ${AUDIT_DB_URL:jdbc:postgresql://localhost:5432/teamflow}
+    username: ${AUDIT_DB_USER:teamflow}
+    password: ${AUDIT_DB_PASSWORD:teamflow}
+  sql:
+    init:
+      mode: always
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,info
+  metrics:
+    tags:
+      application: teamflow-audit
+teamflow:
+  internal-key: ${AUDIT_API_KEY:dev-audit-key}

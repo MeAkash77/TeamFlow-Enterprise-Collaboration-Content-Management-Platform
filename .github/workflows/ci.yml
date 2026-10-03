@@ -1,0 +1,57 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: backend/package-lock.json }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  audit-service:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: audit-service } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21, cache: maven }
+      - run: mvn -B verify
+
+  e2e-smoke:
+    needs: [backend, frontend, audit-service]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot full stack
+        run: docker compose up -d --build postgres redis audit api gateway
+      - name: Wait for gateway
+        run: |
+          for i in $(seq 1 40); do curl -fs localhost:8080/healthz && break; sleep 3; done
+          curl -fs localhost:8080/healthz
+      - name: Seed + smoke test
+        run: |
+          docker compose exec -T api node -e "import('bcryptjs').then(async b=>{const {Pool}=await import('pg');const p=new Pool({connectionString:process.env.DATABASE_URL});const h=await b.default.hash('Passw0rd!',10);await p.query(\"insert into users(email,name,password_hash,role) values('editor@teamflow.dev','Eli',\$1,'editor')\",[h]);await p.end()})"
+          TOKEN=$(curl -fs -X POST localhost:8080/api/auth/login -H 'content-type: application/json' -d '{"email":"editor@teamflow.dev","password":"Passw0rd!"}' | jq -r .token)
+          curl -fs -X POST localhost:8080/api/documents -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"title":"CI doc","body":"hello postgres search"}'
+          curl -fs "localhost:8080/api/documents?q=postgres" -H "authorization: Bearer $TOKEN" | jq -e '.items | length == 1'
+      - if: failure()
+        run: docker compose logs --tail=100

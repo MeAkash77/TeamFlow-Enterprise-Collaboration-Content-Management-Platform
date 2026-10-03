@@ -1,0 +1,85 @@
+name: teamflow
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: teamflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-teamflow}
+      POSTGRES_DB: teamflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teamflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports: ["127.0.0.1:5432:5432"]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 10 }
+    restart: unless-stopped
+
+  audit:
+    build: ./audit-service
+    image: ${IMAGE_PREFIX:-teamflow}-audit:${TAG:-latest}
+    environment:
+      AUDIT_DB_URL: jdbc:postgresql://postgres:5432/teamflow
+      AUDIT_DB_USER: teamflow
+      AUDIT_DB_PASSWORD: ${POSTGRES_PASSWORD:-teamflow}
+      AUDIT_API_KEY: ${AUDIT_API_KEY:-dev-audit-key}
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    image: ${IMAGE_PREFIX:-teamflow}-api:${TAG:-latest}
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgres://teamflow:${POSTGRES_PASSWORD:-teamflow}@postgres:5432/teamflow
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      AUDIT_URL: http://audit:8081
+      AUDIT_API_KEY: ${AUDIT_API_KEY:-dev-audit-key}
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  gateway:            # NGINX + built React SPA
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    image: ${IMAGE_PREFIX:-teamflow}-gateway:${TAG:-latest}
+    ports: ["8080:80"]
+    depends_on: [api]
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"], interval: 10s, timeout: 3s, retries: 5 }
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9090:9090"]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus]
+    restart: unless-stopped
+
+volumes:
+  pgdata:

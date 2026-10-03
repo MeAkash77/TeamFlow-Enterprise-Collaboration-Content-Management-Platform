@@ -1,0 +1,23 @@
+groups:
+  - name: teamflow
+    rules:
+      - alert: ApiDown
+        expr: up{job="api"} == 0
+        for: 1m
+        labels: { severity: page }
+        annotations: { summary: "API instance is down" }
+      - alert: HighErrorRate
+        expr: sum(rate(http_request_duration_seconds_count{status=~"5.."}[5m])) / sum(rate(http_request_duration_seconds_count[5m])) > 0.02
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "5xx error rate above 2%" }
+      - alert: HighLatencyP95
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 0.2
+        for: 10m
+        labels: { severity: warn }
+        annotations: { summary: "p95 latency above 200ms" }
+      - alert: WebhookFailures
+        expr: sum(rate(webhook_deliveries_total{result="failure"}[10m])) > 0.1
+        for: 10m
+        labels: { severity: warn }
+        annotations: { summary: "Outbound webhooks failing" }

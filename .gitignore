@@ -1,0 +1,7 @@
+node_modules/
+dist/
+target/
+.env
+.last_good_tag
+*.log
+.DS_Store
