@@ -196,3 +196,397 @@ Refresh-token rotation + httpOnly cookies · real-time collaborative editing (CR
 
 ## License
 MIT
+
+
+
+
+
+
+
+
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0b5d56,100:1b2430&height=210&section=header&text=TeamFlow%20CMS&fontColor=ffffff&fontSize=64&fontAlignY=38&desc=Enterprise%20Collaboration%20%26%20Content%20Platform&descAlignY=60&descSize=20" alt="TeamFlow CMS" width="100%"/>
+
+**Versioned documents · review & approval workflows · GitHub-linked work · signed webhooks · audited, observable, deployable**
+
+<p>
+  <img src="https://img.shields.io/badge/status-portfolio%20project-0b5d56?style=for-the-badge" alt="status"/>
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="license"/>
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge" alt="PRs welcome"/>
+  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI"/>
+</p>
+
+<p>
+  <a href="#-architecture">Architecture</a> ·
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="#-features">Features</a> ·
+  <a href="#-api-reference">API</a> ·
+  <a href="#-security">Security</a> ·
+  <a href="#-observability">Observability</a> ·
+  <a href="#-cicd--aws">CI/CD & AWS</a> ·
+  <a href="#-performance">Performance</a>
+</p>
+
+</div>
+
+---
+
+## 🧰 Tech Stack
+
+<div align="center">
+
+### Frontend
+<img src="https://skillicons.dev/icons?i=react,ts,vite,html,css&perline=10" alt="Frontend stack"/>
+
+`React 18` · `TypeScript` · `Vite` · `React Router` · `marked + DOMPurify` · responsive CSS · dark mode
+
+### Backend
+<img src="https://skillicons.dev/icons?i=nodejs,express,ts,java,spring,maven&perline=10" alt="Backend stack"/>
+
+`Node.js 20` · `Express 5` · `TypeScript` · `Zod` · `Pino` · `Java 21` · `Spring Boot 3` · `Micrometer` · `Maven`
+
+### Data & Messaging
+<img src="https://skillicons.dev/icons?i=postgres,redis&perline=10" alt="Data stack"/>
+
+`PostgreSQL 16` (full-text search · GIN · JSONB · `SKIP LOCKED` queues) · `Redis 7` (rate limiting)
+
+### Cloud, Infrastructure & DevOps
+<img src="https://skillicons.dev/icons?i=aws,docker,nginx,githubactions,git,github,linux,bash&perline=10" alt="DevOps stack"/>
+
+`AWS (EC2 · RDS · ElastiCache · ALB · ACM · SSM)` · `Docker & Compose` · `NGINX` · `GitHub Actions` · `GHCR`
+
+### Observability & Testing
+<img src="https://skillicons.dev/icons?i=prometheus,grafana,vitest&perline=10" alt="Observability stack"/>
+
+`Prometheus` · `Grafana` · `Alertmanager-ready rules` · `Structured JSON logs` · `Vitest` · `JUnit 5` · `k6`
+
+### Security & Integrations
+<p>
+<img src="https://img.shields.io/badge/JWT-000000?style=flat-square&logo=jsonwebtokens&logoColor=white" alt="JWT"/>
+<img src="https://img.shields.io/badge/OAuth2-EB5424?style=flat-square&logo=auth0&logoColor=white" alt="OAuth2"/>
+<img src="https://img.shields.io/badge/GitHub%20REST%20API-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub API"/>
+<img src="https://img.shields.io/badge/Webhooks-HMAC--SHA256-0b5d56?style=flat-square" alt="Webhooks"/>
+<img src="https://img.shields.io/badge/AES--256--GCM-encrypted%20secrets-critical?style=flat-square" alt="AES"/>
+<img src="https://img.shields.io/badge/RBAC-viewer%20%7C%20editor%20%7C%20admin-5C2D91?style=flat-square" alt="RBAC"/>
+<img src="https://img.shields.io/badge/bcrypt-passwords-333?style=flat-square" alt="bcrypt"/>
+<img src="https://img.shields.io/badge/Helmet-CSP-black?style=flat-square" alt="Helmet"/>
+<img src="https://img.shields.io/badge/k6-load%20testing-7D64FF?style=flat-square&logo=k6&logoColor=white" alt="k6"/>
+</p>
+
+</div>
+
+---
+
+## 🎯 Why this project exists
+
+Most portfolio apps stop at *login → create → edit → delete*. **TeamFlow** is built around the problems real internal engineering platforms have to solve:
+
+- **Who changed what, and can I trust it?** → immutable version history, optimistic concurrency, version-bound approvals, append-only audit log.
+- **How do docs connect to the code?** → GitHub integration that imports commits/PRs and links them to documents (manually or via `DOC-xxxxxxxx` references).
+- **How do other systems react?** → HMAC-signed outbound webhooks with retries and idempotency keys.
+- **Can I run it in production?** → health-gated deploys with automatic rollback, metrics, dashboards and alerts.
+
+## 🏗 Architecture
+
+```mermaid
+flowchart LR
+  U["🌐 Browser<br/>React + TypeScript SPA"] -->|HTTPS| ALB["AWS ALB · TLS (ACM)"]
+  ALB --> NGX["NGINX gateway<br/>static assets · gzip · rate limit · security headers"]
+  NGX -->|"/api"| API["Node.js + Express API<br/>JWT · RBAC · REST · zod"]
+  API --> PG[("PostgreSQL 16<br/>FTS + GIN")]
+  API --> R[("Redis<br/>rate limiting")]
+  API -->|"X-Internal-Key"| AUD["☕ Java 21 · Spring Boot<br/>Audit service"]
+  AUD --> PG
+  API -. "outbox worker<br/>HMAC · retry · backoff" .-> EXT["Customer webhooks"]
+  GH["GitHub"] -->|"signed webhooks"| NGX
+  API -->|"REST + retry"| GH
+  PROM["Prometheus"] -->|"/metrics"| API
+  PROM -->|"/actuator/prometheus"| AUD
+  GRAF["Grafana"] --> PROM
+```
+
+### Document lifecycle (state machine)
+
+```mermaid
+stateDiagram-v2
+  [*] --> draft: create
+  draft --> in_review: submit / request approval
+  in_review --> approved: reviewer approves (same version)
+  in_review --> draft: reviewer rejects
+  approved --> published: owner publishes
+  approved --> draft: edit (new version invalidates approval)
+  published --> draft: edit
+```
+
+### GitHub integration flow
+
+```mermaid
+sequenceDiagram
+  participant E as Editor
+  participant API as TeamFlow API
+  participant GH as GitHub
+  participant DB as PostgreSQL
+  E->>API: POST /integrations/github {repo, token}
+  API->>GH: GET /repos/{repo} (validate)
+  API->>DB: store AES-256-GCM(token) + webhook secret
+  API-->>E: webhook URL + secret (shown once)
+  E->>API: POST /integrations/:id/sync
+  API->>GH: commits + PRs (retry w/ backoff)
+  API->>DB: idempotent upsert + auto-link "DOC-xxxxxxxx"
+  GH-)API: push / pull_request webhook (X-Hub-Signature-256)
+  API->>API: constant-time HMAC verify
+  API->>DB: upsert event (redelivery-safe)
+```
+
+### Data model
+
+```mermaid
+erDiagram
+  users ||--o{ documents : owns
+  documents ||--|{ document_versions : "immutable history"
+  documents ||--o{ comments : has
+  comments ||--o{ mentions : tags
+  documents ||--o{ approvals : "bound to version"
+  documents ||--o{ document_links : links
+  integrations ||--o{ repo_events : imports
+  repo_events ||--o{ document_links : "linked by"
+  webhook_endpoints ||--o{ webhook_deliveries : "outbox + retries"
+  users ||--o{ activity : performs
+```
+
+## ✨ Features
+
+<table>
+<tr><td width="50%" valign="top">
+
+### 📝 Enterprise CMS
+- Immutable **version history**; restore creates a *new* version
+- **Optimistic concurrency** (`baseVersion` → `409` on stale edits)
+- Markdown editor + sanitized live preview
+- `draft → in_review → approved → published`
+- **Full-text search**: weighted `tsvector`, GIN index, `websearch_to_tsquery`, ranked results, highlighted snippets
+
+</td><td width="50%" valign="top">
+
+### 🤝 Collaboration
+- Comments with **@mentions**
+- Real-time-style **activity feed**
+- Document **ownership** rules
+- Reviewer-based **approvals bound to a version**
+- Every mutation emits events to the UI feed *and* the webhook outbox
+
+</td></tr>
+<tr><td valign="top">
+
+### 🔐 Enterprise security
+- **JWT** + **OAuth2 (GitHub)** sign-in
+- **RBAC** enforced server-side (viewer / editor / admin)
+- **Audit log** in a dedicated Java service
+- AES-256-GCM encrypted integration tokens
+- Boot-time refusal of default secrets in production
+
+</td><td valign="top">
+
+### 🔌 REST integration layer
+- **GitHub**: connect → import commits/PRs → link to docs → live webhook updates
+- **Outbound webhooks**: HMAC-signed, 5 attempts, exponential backoff, delivery IDs
+- `Idempotency-Key` replay on writes
+- **Redis rate limiting** + NGINX `limit_req`
+
+</td></tr>
+<tr><td valign="top">
+
+### 🖥 Frontend
+- React 18 + TypeScript, typed API client
+- Responsive (mobile → desktop), **dark mode**
+- Accessible: skip link, labelled controls, `aria-live`, focus rings, `prefers-reduced-motion`
+- Explicit **loading / error / empty** states
+- ES2019 build target for broad browser support
+
+</td><td valign="top">
+
+### 🚀 Production engineering
+- Multi-stage, **non-root** Docker images + `HEALTHCHECK`s
+- NGINX: gzip, immutable asset caching, CSP & security headers
+- **Health-gated deploys with automatic rollback**
+- Graceful shutdown, liveness vs readiness probes
+
+</td></tr>
+</table>
+
+## ⚡ Quick Start
+
+**Prerequisites:** Docker 24+ with Compose v2 (and `make`). Optional: Node 20, JDK 21, k6.
+
+```bash
+git clone https://github.com/<you>/teamflow-cms.git && cd teamflow-cms
+make up              # postgres · redis · audit (Java) · api (Node) · gateway (NGINX + SPA) · prometheus · grafana
+make seed N=5000     # demo users + 5,000 documents
+```
+
+| Service | URL | Notes |
+|---|---|---|
+| **App** | http://localhost:8080 | `editor@teamflow.dev` / `Passw0rd!` (also `admin@…`, `viewer@…`) |
+| **Grafana** | http://localhost:3001 | dashboard *TeamFlow — Service Overview* |
+| **Prometheus** | http://localhost:9090 | alert rules loaded from `monitoring/alerts.yml` |
+
+<details>
+<summary><b>Run apps locally without Docker</b></summary>
+
+```bash
+docker compose up -d postgres redis audit
+cd backend  && npm install && npm run dev      # http://localhost:4000
+cd frontend && npm install && npm run dev      # http://localhost:5173 (proxies /api)
+```
+</details>
+
+<details>
+<summary><b>Environment variables</b></summary>
+
+| Variable | Purpose |
+|---|---|
+| `JWT_SECRET` | Signs access tokens (required in production) |
+| `ENCRYPTION_KEY` | 64-hex-char key for AES-256-GCM (`openssl rand -hex 32`) |
+| `AUDIT_API_KEY` | Shared key between API and Java audit service |
+| `POSTGRES_PASSWORD` | Database password |
+| `APP_URL` | Public base URL (CORS, OAuth redirect, webhook URLs) |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | Optional GitHub OAuth2 login |
+</details>
+
+## 📚 API Reference
+
+All routes live under `/api`; authenticated routes need `Authorization: Bearer <JWT>`.
+
+| Method & path | Min role | Purpose |
+|---|---|---|
+| `POST /auth/register` · `POST /auth/login` · `GET /auth/github` | public | Authentication (register → `viewer`) |
+| `GET /auth/me` · `GET /users` · `PATCH /users/:id/role` | any · editor · admin | Identity & role admin |
+| `GET /documents?q=&status=&limit=&offset=` | viewer¹ | List / full-text search |
+| `POST /documents` | editor | Create (supports `Idempotency-Key`) |
+| `PUT /documents/:id` | owner/admin | Save new version (`baseVersion`) |
+| `GET /documents/:id/versions` · `POST …/versions/:v/restore` | viewer · owner | History / restore |
+| `POST /documents/:id/submit` · `…/publish` · `DELETE /documents/:id` | owner · owner (approved) · admin | Workflow |
+| `GET/POST /documents/:id/comments` | viewer · editor | Comments + mentions |
+| `GET/POST /documents/:id/approvals` · `POST /approvals/:id/decision` | viewer · owner · reviewer | Approvals |
+| `GET /activity` | viewer | Activity feed |
+| `POST /integrations/github` · `GET /integrations` · `POST /integrations/:id/sync` · `GET …/events` | editor | GitHub integration |
+| `GET/POST /documents/:id/links` · `DELETE …/links/:eventId` | viewer · editor | Link commits/PRs to docs |
+| `POST /hooks/github/:id` | HMAC | Inbound GitHub webhook |
+| `GET/POST/DELETE /webhook-endpoints` · `GET …/deliveries` | admin | Outbound webhooks |
+| `GET /audit` | admin | Audit trail (from Java service) |
+| `GET /health` · `/healthz` · `/readyz` · `/metrics` | public / internal | Probes & Prometheus |
+
+¹ Viewers only see `published` documents.
+
+## 🔒 Security
+
+| Layer | Control |
+|---|---|
+| **AuthN** | bcrypt password hashing · short-lived JWT (issuer-checked) · GitHub OAuth2 code flow |
+| **AuthZ** | Role middleware on every route · ownership checks · version-bound approvals |
+| **Secrets** | Integration tokens encrypted with AES-256-GCM · production refuses default secrets |
+| **Webhooks** | Inbound `X-Hub-Signature-256` verified in constant time · outbound signed `X-TeamFlow-Signature` |
+| **Input** | Zod validation on writes · parameterized SQL · UUID validation · DOMPurify for rendered Markdown |
+| **Edge** | NGINX rate limiting, CSP, `X-Frame-Options`, `nosniff`; `/metrics` and audit service never public |
+| **Accountability** | Append-only audit log: logins, failures, role changes, publishes, integration changes |
+
+> **Known trade-offs:** JWT is kept in `localStorage` (httpOnly cookies + CSRF would be stronger), no refresh-token rotation yet, and outbound webhook URLs are only scheme-validated (no SSRF allow-list). See [Roadmap](#-roadmap).
+
+## 📈 Observability
+
+```text
+http_request_duration_seconds{method,route,status}   → request rate · p50/p95/p99 · 5xx ratio
+webhook_deliveries_total{result}                      → integration health
+up{job="api"}                                         → availability
+```
+
+- **Grafana dashboard as code:** availability, throughput, p95 (global & per route), error ratio, webhook outcomes.
+- **Alert rules:** `ApiDown`, `HighErrorRate (>2%)`, `HighLatencyP95 (>200ms)`, `WebhookFailures`.
+- **Logs:** structured JSON (pino) with request IDs propagated from NGINX (`X-Request-Id`).
+- **Java service:** JVM + HTTP metrics via Spring Actuator / Micrometer.
+
+## 🔁 CI/CD & AWS
+
+```mermaid
+flowchart LR
+  A["git push"] --> B["CI"]
+  B --> B1["Backend: typecheck · tests · build"]
+  B --> B2["Frontend: typecheck · build"]
+  B --> B3["Java: mvn verify"]
+  B1 & B2 & B3 --> C["Docker smoke test<br/>login → create → search"]
+  C --> D["Build & push images (GHCR, tag = SHA)"]
+  D --> E["SSH → EC2: deploy.sh"]
+  E --> F{"Health check<br/>passes?"}
+  F -->|yes| G["✅ record last good tag"]
+  F -->|no| H["⏪ automatic rollback"]
+```
+
+**AWS reference topology:** ALB (TLS via ACM) → EC2 running Docker Compose → RDS PostgreSQL (Multi-AZ) + ElastiCache Redis; secrets in SSM Parameter Store. Step-by-step guide: [`docs/DEPLOY_AWS.md`](docs/DEPLOY_AWS.md).
+
+## 🏁 Performance
+
+Load test: `scripts/loadtest.js` ramps to **500 virtual users** on search + list endpoints with thresholds `p(95) < 200ms` and `error rate < 1%`.
+
+```bash
+make up && make seed N=5000 && make loadtest
+```
+
+Record your own results here after running it:
+
+| Dataset | Virtual users | p50 | p95 | p99 | Error rate | Hardware |
+|---|---|---|---|---|---|---|
+| _5,000 docs_ | _500_ | _…_ | _…_ | _…_ | _…_ | _e.g. t3.medium_ |
+
+## 🗂 Repository layout
+
+```text
+teamflow-cms/
+├── frontend/          React + TypeScript (Vite)
+├── backend/           Node.js + Express API (TypeScript, Vitest)
+├── audit-service/     Java 21 + Spring Boot 3 audit service
+├── nginx/             Gateway config + Dockerfile (bundles built SPA)
+├── db/init.sql        Schema, constraints, indexes
+├── monitoring/        Prometheus, alert rules, Grafana provisioning
+├── scripts/           deploy.sh (health-gated + rollback) · k6 load test
+├── docs/              AWS deployment guide
+└── .github/workflows  CI and Deploy pipelines
+```
+
+## 🧠 Engineering decisions
+
+| Decision | Rationale |
+|---|---|
+| Postgres FTS over Elasticsearch | One fewer system to run; GIN + ranked `tsvector` covers 10⁴–10⁵ docs; clean path to OpenSearch later |
+| Outbox table + `FOR UPDATE SKIP LOCKED` | At-least-once delivery without a broker; safe across multiple API replicas |
+| Version-bound approvals | Prevents "approved v2, published v5" compliance gaps |
+| Optimistic concurrency | Stateless protection against lost updates |
+| Separate Java audit service | Isolates append-only compliance data; demonstrates internal service auth and polyglot operation; audit outages never block the product |
+| Route-template metric labels | Bounds Prometheus cardinality (no UUIDs in labels) |
+
+## 🛣 Roadmap
+
+- [ ] httpOnly-cookie sessions + refresh-token rotation
+- [ ] Real-time collaborative editing (WebSocket / CRDT)
+- [ ] Rich-text editor (TipTap) alongside Markdown
+- [ ] Bitbucket provider behind the same integration interface
+- [ ] Terraform for the full AWS stack
+- [ ] OpenTelemetry tracing across Node ↔ Java
+- [ ] SSRF allow-listing for outbound webhooks
+- [ ] Playwright end-to-end suite
+
+## 🤝 Contributing
+
+1. Fork and create a feature branch.
+2. `cd backend && npm test` and `cd frontend && npm run typecheck`.
+3. Open a PR; CI must be green.
+
+## 📄 License
+
+MIT — see [`LICENSE`](LICENSE).
+
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:1b2430,100:0b5d56&height=100&section=footer" width="100%" alt=""/>
+
+</div>
